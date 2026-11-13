@@ -35,7 +35,7 @@ async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong! Bot is online.")
 
 
-async def erlc_request(interaction: discord.Interaction, command: str | None = None):
+async def erlc_request(interaction: discord.Interaction, command=None):
     if (
         interaction.guild_id is None
         or str(interaction.guild_id) != DISCORD_SERVER_ID
@@ -49,17 +49,22 @@ async def erlc_request(interaction: discord.Interaction, command: str | None = N
 
     if not SERVER_KEY:
         await interaction.response.send_message(
-            "Set ERLC_SERVER_KEY in the bot service variables and deploy.",
+            "Set ERLC_SERVER_KEY in Railway Variables and deploy.",
             ephemeral=True,
         )
         return
 
     await interaction.response.defer(ephemeral=True, thinking=True)
     headers = {"server-key": SERVER_KEY}
+
     try:
         if command is None:
             response = await asyncio.to_thread(
-                requests.get, API_URL, headers=headers, timeout=12, allow_redirects=False
+                requests.get,
+                API_URL,
+                headers=headers,
+                timeout=12,
+                allow_redirects=False,
             )
         else:
             response = await asyncio.to_thread(
@@ -72,28 +77,36 @@ async def erlc_request(interaction: discord.Interaction, command: str | None = N
             )
     except requests.RequestException:
         await interaction.followup.send(
-            "No response from ER:LC. Check the game before retrying a command.",
+            "Could not reach ER:LC. Check the game before retrying.",
             ephemeral=True,
         )
         return
 
     code = response.status_code
-    if code == 200:
-        if command is None:
+    if code == 200 and command is None:
+        try:
             data = response.json()
-            message = f"{data.get('Name', 'ER:LC')} | Players: {data.get('CurrentPlayers', '?')}/{data.get('MaxPlayers', '?')}"
-        else:
-            message = "ER:LC confirmed the command ran."
+            name = data.get("Name", "ER:LC")
+            players = data.get("CurrentPlayers", "?")
+            maximum = data.get("MaxPlayers", "?")
+            message = f"{name} | Players: {players}/{maximum}"
+        except (ValueError, AttributeError):
+            message = "ER:LC returned an unreadable status response."
+    elif code == 200:
+        message = "ER:LC confirmed the command ran."
     elif code in (401, 403):
         message = f"ER:LC denied access ({code}). Check the server key and API permissions."
     elif code == 429:
         message = "ER:LC rate limit reached. Wait before trying again."
     elif code == 422:
-        message = "ER:LC could not run the command. Check whether the private server is online."
+        message = "ER:LC could not complete the request. Check whether the private server is online."
     else:
-        message = f"ER:LC returned HTTP {code}. Check the command and server status."
+        message = f"ER:LC returned HTTP {code}."
+
     await interaction.followup.send(
-        message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+        message,
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
     )
 
 
@@ -112,9 +125,11 @@ async def erlc(interaction: discord.Interaction, command: str):
     command = command.strip()
     if not command.startswith(":") or not command[1:].strip():
         await interaction.response.send_message(
-            "Enter a full ER:LC command, such as :h Hello!", ephemeral=True
+            "Enter a full ER:LC command, such as :h Hello!",
+            ephemeral=True,
         )
         return
+
     await erlc_request(interaction, command)
 
 
@@ -129,4 +144,5 @@ if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN", "").strip()
     if not token:
         raise RuntimeError("Set DISCORD_TOKEN in Railway Variables or your local .env.")
+
     bot.run(token)
