@@ -1,5 +1,6 @@
 import asyncio
 import os
+from pathlib import Path
 
 import discord
 import requests
@@ -9,13 +10,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_URL = "https://api.erlc.gg/v2/server"
+SERVER_NAME = "New York City Roleplay"
+GAME_CODE = "NYCRPIsFun"
+LOGO_PATH = Path(__file__).with_name("noFilter.webp")
+
 DISCORD_SERVER_ID = os.getenv("DISCORD_SERVER_ID", "").strip()
 ERLC_SERVER_KEY = os.getenv("ERLC_SERVER_KEY", "").strip()
 SSU_PING_ROLE_ID = os.getenv("SSU_PING_ROLE_ID", "").strip()
 
 DEFAULT_JOIN_URL = (
     "https://www.roblox.com/games/start?placeId=2534724415"
-    "&launchData=%7B%22psCode%22%3A%22joeyisfun%22%7D"
+    "&launchData=%7B%22psCode%22%3A%22NYCRPIsFun%22%7D"
 )
 ERLC_JOIN_URL = os.getenv("ERLC_JOIN_URL", "").strip() or DEFAULT_JOIN_URL
 
@@ -27,7 +32,7 @@ class ERLCBot(discord.Client):
 
     async def setup_hook(self):
         commands = await self.tree.sync()
-        print("Synced:", ", ".join(f"/{cmd.name}" for cmd in commands), flush=True)
+        print("Synced:", ", ".join(f"/{command.name}" for command in commands), flush=True)
 
 
 bot = ERLCBot()
@@ -51,6 +56,23 @@ async def require_admin(interaction: discord.Interaction) -> bool:
         ephemeral=True,
     )
     return False
+
+
+async def require_join_link(interaction: discord.Interaction) -> bool:
+    if ERLC_JOIN_URL.startswith("https://"):
+        return True
+
+    await interaction.response.send_message(
+        "Set ERLC_JOIN_URL to an HTTPS link or clear it to use the built-in NYC link.",
+        ephemeral=True,
+    )
+    return False
+
+
+def join_button():
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label="▶ Join Server", url=ERLC_JOIN_URL))
+    return view
 
 
 async def erlc_request(interaction: discord.Interaction, command=None):
@@ -116,7 +138,9 @@ async def erlc_request(interaction: discord.Interaction, command=None):
         message = f"ER:LC returned HTTP {code}."
 
     await interaction.followup.send(
-        message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+        message,
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
     )
 
 
@@ -140,7 +164,8 @@ async def erlc(interaction: discord.Interaction, command: str):
     command = command.strip()
     if not command.startswith(":") or not command[1:].strip():
         await interaction.response.send_message(
-            "Enter a full command, such as :h Hello!", ephemeral=True
+            "Enter a full command, such as :h Hello!",
+            ephemeral=True,
         )
         return
 
@@ -154,33 +179,25 @@ async def announce(interaction: discord.Interaction, message: str):
     await erlc_request(interaction, f":m {message.strip()}")
 
 
-@bot.tree.command(description="Post an ER:LC session-start announcement")
+@bot.tree.command(description="Post a New York City Roleplay session announcement")
 @app_commands.guild_only()
 @app_commands.default_permissions(administrator=True)
 async def ssu(interaction: discord.Interaction):
     if not await require_admin(interaction):
         return
-
-    if not ERLC_JOIN_URL.startswith("https://"):
-        await interaction.response.send_message(
-            "Set ERLC_JOIN_URL to an HTTPS link or clear it to use the built-in link.",
-            ephemeral=True,
-        )
+    if not await require_join_link(interaction):
         return
 
     started = int(discord.utils.utcnow().timestamp())
     embed = discord.Embed(
         title="Session Started!",
         description=(
-            "Our ER:LC roleplay session is now live! "
+            f"Our **{SERVER_NAME}** session is now live! "
             "Click **Join Server** below to hop in and start roleplaying.\n\n"
             f"Session started: <t:{started}:R>"
         ),
         color=discord.Color.blue(),
     )
-
-    view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="▶ Join Server", url=ERLC_JOIN_URL))
 
     role = None
     if SSU_PING_ROLE_ID.isdecimal():
@@ -191,7 +208,7 @@ async def ssu(interaction: discord.Interaction):
     await interaction.response.send_message(
         content=role.mention if role else None,
         embed=embed,
-        view=view,
+        view=join_button(),
         allowed_mentions=discord.AllowedMentions(
             everyone=False,
             users=False,
@@ -200,8 +217,44 @@ async def ssu(interaction: discord.Interaction):
     )
 
 
+@bot.tree.command(description="Post the New York City Roleplay session info panel")
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+async def sessioninfo(interaction: discord.Interaction):
+    if not await require_admin(interaction):
+        return
+    if not await require_join_link(interaction):
+        return
+
+    if not LOGO_PATH.is_file():
+        await interaction.response.send_message(
+            "Upload noFilter.webp beside bot.py and redeploy.",
+            ephemeral=True,
+        )
+        return
+
+    embed = discord.Embed(
+        title=SERVER_NAME,
+        description=(
+            "**Session Information**\n"
+            "Click **Join Server** below to open our ER:LC private server, "
+            "or enter the game code in ER:LC."
+        ),
+        color=discord.Color.blue(),
+    )
+    embed.add_field(name="Game Code", value=f"`{GAME_CODE}`", inline=False)
+    embed.set_thumbnail(url="attachment://noFilter.webp")
+
+    await interaction.response.send_message(
+        embed=embed,
+        file=discord.File(LOGO_PATH, filename="noFilter.webp"),
+        view=join_button(),
+    )
+
+
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN", "").strip()
     if not token:
         raise RuntimeError("Set DISCORD_TOKEN in Railway Variables or your local .env.")
+
     bot.run(token)
