@@ -14,7 +14,7 @@ load_dotenv()
 SERVER_NAME = "New York City Roleplay"
 GAME_CODE = "NYCRPIsFun"
 API_URL = "https://api.erlc.gg/v2/server"
-BANNER_PATH = Path(__file__).with_name("session-info-small-logo.png")
+BANNER_PATH = Path(__file__).with_name("download.png")
 
 DISCORD_SERVER_ID = os.getenv("DISCORD_SERVER_ID", "").strip()
 ERLC_SERVER_KEY = os.getenv("ERLC_SERVER_KEY", "").strip()
@@ -65,15 +65,13 @@ async def require_admin(interaction: discord.Interaction) -> bool:
 async def require_join_link(interaction: discord.Interaction) -> bool:
     try:
         url = urlsplit(ERLC_JOIN_URL)
-        valid = url.scheme == "https" and bool(url.hostname)
+        if url.scheme == "https" and url.hostname:
+            return True
     except ValueError:
-        valid = False
-
-    if valid:
-        return True
+        pass
 
     await interaction.response.send_message(
-        "Set ERLC_JOIN_URL to an HTTPS link or remove it to use the NYC link.",
+        "Set ERLC_JOIN_URL to an HTTPS link or remove it to use the built-in NYC link.",
         ephemeral=True,
     )
     return False
@@ -142,7 +140,7 @@ async def erlc_request(interaction: discord.Interaction, command=None):
     except requests.exceptions.JSONDecodeError:
         message = "ER:LC returned an unreadable status response."
     except requests.RequestException:
-        message = "Could not reach ER:LC. Check the game before retrying a command."
+        message = "Could not reach ER:LC. Check the game before retrying."
 
     await interaction.followup.send(
         message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
@@ -155,11 +153,14 @@ def online_staff_count(data):
     if not isinstance(players, list) or not isinstance(staff, dict):
         return "Unavailable"
 
-    staff_ids = {
-        str(user_id)
-        for user_id in [data.get("OwnerId"), *(data.get("CoOwnerIds") or [])]
-        if user_id is not None
-    }
+    staff_ids = set()
+    owner_id = data.get("OwnerId")
+    if owner_id is not None:
+        staff_ids.add(str(owner_id))
+
+    co_owners = data.get("CoOwnerIds")
+    if isinstance(co_owners, list):
+        staff_ids.update(str(user_id) for user_id in co_owners)
 
     for rank in ("Admins", "Mods", "Helpers"):
         roster = staff.get(rank)
@@ -266,8 +267,10 @@ async def sessioninfo(interaction: discord.Interaction):
             )
             if response.status_code == 200:
                 data = response.json()
+            else:
+                print(f"Session stats returned HTTP {response.status_code}", flush=True)
         except (requests.RequestException, ValueError):
-            pass
+            print("Could not load ER:LC session stats.", flush=True)
 
     players = staff = queue = "Unavailable"
     updated = "Stats unavailable"
@@ -287,7 +290,12 @@ async def sessioninfo(interaction: discord.Interaction):
 
     info = discord.Embed(
         title=SERVER_NAME,
-        description=f"**Session Information**\nLast updated: {updated}",
+        description=(
+            "**Session Information**\n"
+            "Check who's in-game, see how many players are waiting, "
+            "or use **Join Server** to hop into the session.\n\n"
+            f"**Last updated:** {updated}"
+        ),
         color=discord.Color.blue(),
     )
     info.add_field(name="In-game Players", value=players, inline=False)
@@ -296,15 +304,14 @@ async def sessioninfo(interaction: discord.Interaction):
     info.add_field(name="Game Code", value=f"`{GAME_CODE}`", inline=False)
 
     if BANNER_PATH.is_file():
-        banner = discord.Embed(color=discord.Color.blue())
-        banner.set_image(url=f"attachment://{BANNER_PATH.name}")
+        info.set_image(url=f"attachment://{BANNER_PATH.name}")
         await interaction.followup.send(
-            embeds=[banner, info],
+            embed=info,
             file=discord.File(BANNER_PATH, filename=BANNER_PATH.name),
             view=join_button(),
         )
     else:
-        print(f"Session banner missing: {BANNER_PATH.name}", flush=True)
+        print(f"Session banner missing beside bot.py: {BANNER_PATH.name}", flush=True)
         await interaction.followup.send(embed=info, view=join_button())
 
 
