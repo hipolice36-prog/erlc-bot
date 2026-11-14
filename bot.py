@@ -116,9 +116,7 @@ async def erlc_request(interaction: discord.Interaction, command=None):
         message = f"ER:LC returned HTTP {code}."
 
     await interaction.followup.send(
-        message,
-        ephemeral=True,
-        allowed_mentions=discord.AllowedMentions.none(),
+        message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
     )
 
 
@@ -142,8 +140,7 @@ async def erlc(interaction: discord.Interaction, command: str):
     command = command.strip()
     if not command.startswith(":") or not command[1:].strip():
         await interaction.response.send_message(
-            "Enter a full command, such as :h Hello!",
-            ephemeral=True,
+            "Enter a full command, such as :h Hello!", ephemeral=True
         )
         return
 
@@ -173,9 +170,12 @@ async def ssu(interaction: discord.Interaction):
 
     started = int(discord.utils.utcnow().timestamp())
     embed = discord.Embed(
-        title="Session Started!",
-        description=f"Join up for top tier roleplay.\n\nSession started: <t:{started}:R>",
-        color=discord.Color.green(),
+        description=(
+            "# Session Started!\n"
+            "Join up for top tier roleplay.\n\n"
+            f"**Session started:** <t:{started}:R>"
+        ),
+        color=discord.Color.blue(),
     )
 
     view = discord.ui.View(timeout=None)
