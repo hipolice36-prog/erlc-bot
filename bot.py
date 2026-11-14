@@ -11,8 +11,13 @@ load_dotenv()
 API_URL = "https://api.erlc.gg/v2/server"
 DISCORD_SERVER_ID = os.getenv("DISCORD_SERVER_ID", "").strip()
 ERLC_SERVER_KEY = os.getenv("ERLC_SERVER_KEY", "").strip()
-ERLC_JOIN_URL = os.getenv("ERLC_JOIN_URL", "").strip()
 SSU_PING_ROLE_ID = os.getenv("SSU_PING_ROLE_ID", "").strip()
+
+DEFAULT_JOIN_URL = (
+    "https://www.roblox.com/games/start?placeId=2534724415"
+    "&launchData=%7B%22psCode%22%3A%22joeyisfun%22%7D"
+)
+ERLC_JOIN_URL = os.getenv("ERLC_JOIN_URL", "").strip() or DEFAULT_JOIN_URL
 
 
 class ERLCBot(discord.Client):
@@ -21,7 +26,8 @@ class ERLCBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
+        commands = await self.tree.sync()
+        print("Synced:", ", ".join(f"/{cmd.name}" for cmd in commands), flush=True)
 
 
 bot = ERLCBot()
@@ -53,7 +59,7 @@ async def erlc_request(interaction: discord.Interaction, command=None):
 
     if not ERLC_SERVER_KEY:
         await interaction.response.send_message(
-            "Set ERLC_SERVER_KEY in the bot's environment.",
+            "Set ERLC_SERVER_KEY in Railway Variables or your local .env.",
             ephemeral=True,
         )
         return
@@ -81,7 +87,7 @@ async def erlc_request(interaction: discord.Interaction, command=None):
             )
     except requests.RequestException:
         await interaction.followup.send(
-            "Could not reach ER:LC. Check the game before retrying a command.",
+            "Could not reach ER:LC. Check the game before retrying.",
             ephemeral=True,
         )
         return
@@ -136,7 +142,8 @@ async def erlc(interaction: discord.Interaction, command: str):
     command = command.strip()
     if not command.startswith(":") or not command[1:].strip():
         await interaction.response.send_message(
-            "Enter a full command, such as :h Hello!", ephemeral=True
+            "Enter a full command, such as :h Hello!",
+            ephemeral=True,
         )
         return
 
@@ -159,7 +166,7 @@ async def ssu(interaction: discord.Interaction):
 
     if not ERLC_JOIN_URL.startswith("https://"):
         await interaction.response.send_message(
-            "Set ERLC_JOIN_URL to your private server's HTTPS join link.",
+            "Set ERLC_JOIN_URL to an HTTPS link or clear it to use the built-in link.",
             ephemeral=True,
         )
         return
@@ -170,6 +177,7 @@ async def ssu(interaction: discord.Interaction):
         description=f"Join up for top tier roleplay.\n\nSession started: <t:{started}:R>",
         color=discord.Color.green(),
     )
+
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="▶ Join Server", url=ERLC_JOIN_URL))
 
