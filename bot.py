@@ -1,6 +1,8 @@
 import asyncio
+import json
 import os
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
 
 import discord
 import requests
@@ -9,19 +11,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_URL = "https://api.erlc.gg/v2/server"
 SERVER_NAME = "New York City Roleplay"
 GAME_CODE = "NYCRPIsFun"
-LOGO_PATH = Path(__file__).with_name("noFilter.webp")
+API_URL = "https://api.erlc.gg/v2/server"
+BANNER_PATH = Path(__file__).with_name("session-info-small-logo.png")
 
 DISCORD_SERVER_ID = os.getenv("DISCORD_SERVER_ID", "").strip()
 ERLC_SERVER_KEY = os.getenv("ERLC_SERVER_KEY", "").strip()
 SSU_PING_ROLE_ID = os.getenv("SSU_PING_ROLE_ID", "").strip()
 
-DEFAULT_JOIN_URL = (
-    "https://www.roblox.com/games/start?placeId=2534724415"
-    "&launchData=%7B%22psCode%22%3A%22NYCRPIsFun%22%7D"
-)
+join_query = urlencode({
+    "placeId": "2534724415",
+    "launchData": json.dumps({"psCode": GAME_CODE}, separators=(",", ":")),
+})
+DEFAULT_JOIN_URL = f"https://www.roblox.com/games/start?{join_query}"
 ERLC_JOIN_URL = os.getenv("ERLC_JOIN_URL", "").strip() or DEFAULT_JOIN_URL
 
 
@@ -32,7 +35,8 @@ class ERLCBot(discord.Client):
 
     async def setup_hook(self):
         commands = await self.tree.sync()
-        print("Synced:", ", ".join(f"/{command.name}" for command in commands), flush=True)
+        names = ", ".join(f"/{command.name}" for command in commands)
+        print(f"Synced: {names}", flush=True)
 
 
 bot = ERLCBot()
@@ -59,11 +63,17 @@ async def require_admin(interaction: discord.Interaction) -> bool:
 
 
 async def require_join_link(interaction: discord.Interaction) -> bool:
-    if ERLC_JOIN_URL.startswith("https://"):
+    try:
+        url = urlsplit(ERLC_JOIN_URL)
+        valid = url.scheme == "https" and bool(url.hostname)
+    except ValueError:
+        valid = False
+
+    if valid:
         return True
 
     await interaction.response.send_message(
-        "Set ERLC_JOIN_URL to an HTTPS link or clear it to use the built-in NYC link.",
+        "Set ERLC_JOIN_URL to an HTTPS link or remove it to use the NYC link.",
         ephemeral=True,
     )
     return False
@@ -73,6 +83,28 @@ def join_button():
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="▶ Join Server", url=ERLC_JOIN_URL))
     return view
+
+
+async def request_erlc(method, path="", **kwargs):
+    return await asyncio.to_thread(
+        requests.request,
+        method,
+        f"{API_URL}{path}",
+        headers={"server-key": ERLC_SERVER_KEY},
+        timeout=12,
+        allow_redirects=False,
+        **kwargs,
+    )
+
+
+def api_error(status_code):
+    messages = {
+        401: "ER:LC rejected the server key.",
+        403: "ER:LC denied access. If /status works, check Trusted IP Addresses.",
+        422: "ER:LC could not complete the request. Check whether the game server is online.",
+        429: "ER:LC rate limit reached. Wait before trying again.",
+    }
+    return messages.get(status_code, f"ER:LC returned HTTP {status_code}.")
 
 
 async def erlc_request(interaction: discord.Interaction, command=None):
@@ -87,61 +119,61 @@ async def erlc_request(interaction: discord.Interaction, command=None):
         return
 
     await interaction.response.defer(ephemeral=True, thinking=True)
-    headers = {"server-key": ERLC_SERVER_KEY}
 
     try:
         if command is None:
-            response = await asyncio.to_thread(
-                requests.get,
-                API_URL,
-                headers=headers,
-                timeout=12,
-                allow_redirects=False,
-            )
+            response = await request_erlc("GET")
         else:
-            response = await asyncio.to_thread(
-                requests.post,
-                f"{API_URL}/command",
-                headers=headers,
-                json={"command": command},
-                timeout=12,
-                allow_redirects=False,
-            )
-    except requests.RequestException:
-        await interaction.followup.send(
-            "Could not reach ER:LC. Check the game before retrying.",
-            ephemeral=True,
-        )
-        return
+            response = await request_erlc("POST", "/command", json={"command": command})
 
-    code = response.status_code
-    if code == 200 and command is None:
-        try:
+        if response.status_code != 200:
+            message = api_error(response.status_code)
+        elif command is not None:
+            message = "ER:LC confirmed the command ran."
+        else:
             data = response.json()
-            name = data.get("Name", "ER:LC")
-            current = data.get("CurrentPlayers", "?")
-            maximum = data.get("MaxPlayers", "?")
-            message = f"{name} | Players: {current}/{maximum}"
-        except (ValueError, AttributeError):
-            message = "ER:LC returned an unreadable status response."
-    elif code == 200:
-        message = "ER:LC confirmed the command ran."
-    elif code == 401:
-        message = "ER:LC rejected the server key."
-    elif code == 403:
-        message = "ER:LC denied access. If /status works, check Trusted IP Addresses."
-    elif code == 429:
-        message = "ER:LC rate limit reached. Wait before trying again."
-    elif code == 422:
-        message = "ER:LC could not complete the request. Check if the game server is online."
-    else:
-        message = f"ER:LC returned HTTP {code}."
+            if isinstance(data, dict):
+                name = data.get("Name", SERVER_NAME)
+                current = data.get("CurrentPlayers", "?")
+                maximum = data.get("MaxPlayers", "?")
+                message = f"{name} | Players: {current}/{maximum}"
+            else:
+                message = "ER:LC returned an unreadable status response."
+    except requests.exceptions.JSONDecodeError:
+        message = "ER:LC returned an unreadable status response."
+    except requests.RequestException:
+        message = "Could not reach ER:LC. Check the game before retrying a command."
 
     await interaction.followup.send(
-        message,
-        ephemeral=True,
-        allowed_mentions=discord.AllowedMentions.none(),
+        message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
     )
+
+
+def online_staff_count(data):
+    players = data.get("Players")
+    staff = data.get("Staff")
+    if not isinstance(players, list) or not isinstance(staff, dict):
+        return "Unavailable"
+
+    staff_ids = {
+        str(user_id)
+        for user_id in [data.get("OwnerId"), *(data.get("CoOwnerIds") or [])]
+        if user_id is not None
+    }
+
+    for rank in ("Admins", "Mods", "Helpers"):
+        roster = staff.get(rank)
+        if isinstance(roster, dict):
+            staff_ids.update(str(user_id) for user_id in roster)
+
+    online_ids = set()
+    for player in players:
+        if isinstance(player, dict):
+            _, _, user_id = str(player.get("Player", "")).rpartition(":")
+            if user_id.isdecimal():
+                online_ids.add(user_id)
+
+    return str(len(staff_ids & online_ids))
 
 
 @bot.tree.command(description="Check whether the bot is online")
@@ -164,8 +196,7 @@ async def erlc(interaction: discord.Interaction, command: str):
     command = command.strip()
     if not command.startswith(":") or not command[1:].strip():
         await interaction.response.send_message(
-            "Enter a full command, such as :h Hello!",
-            ephemeral=True,
+            "Enter a full command, such as :h Hello!", ephemeral=True
         )
         return
 
@@ -176,16 +207,19 @@ async def erlc(interaction: discord.Interaction, command: str):
 @app_commands.guild_only()
 @app_commands.default_permissions(administrator=True)
 async def announce(interaction: discord.Interaction, message: str):
-    await erlc_request(interaction, f":m {message.strip()}")
+    message = message.strip()
+    if not message:
+        await interaction.response.send_message("Enter a message.", ephemeral=True)
+        return
+
+    await erlc_request(interaction, f":m {message}")
 
 
 @bot.tree.command(description="Post a New York City Roleplay session announcement")
 @app_commands.guild_only()
 @app_commands.default_permissions(administrator=True)
 async def ssu(interaction: discord.Interaction):
-    if not await require_admin(interaction):
-        return
-    if not await require_join_link(interaction):
+    if not await require_admin(interaction) or not await require_join_link(interaction):
         return
 
     started = int(discord.utils.utcnow().timestamp())
@@ -210,9 +244,7 @@ async def ssu(interaction: discord.Interaction):
         embed=embed,
         view=join_button(),
         allowed_mentions=discord.AllowedMentions(
-            everyone=False,
-            users=False,
-            roles=[role] if role else False,
+            everyone=False, users=False, roles=[role] if role else False
         ),
     )
 
@@ -221,40 +253,63 @@ async def ssu(interaction: discord.Interaction):
 @app_commands.guild_only()
 @app_commands.default_permissions(administrator=True)
 async def sessioninfo(interaction: discord.Interaction):
-    if not await require_admin(interaction):
-        return
-    if not await require_join_link(interaction):
+    if not await require_admin(interaction) or not await require_join_link(interaction):
         return
 
-    if not LOGO_PATH.is_file():
-        await interaction.response.send_message(
-            "Upload noFilter.webp beside bot.py and redeploy.",
-            ephemeral=True,
-        )
-        return
+    await interaction.response.defer(thinking=True)
 
-    embed = discord.Embed(
+    data = None
+    if ERLC_SERVER_KEY:
+        try:
+            response = await request_erlc(
+                "GET", params={"Players": "true", "Staff": "true", "Queue": "true"}
+            )
+            if response.status_code == 200:
+                data = response.json()
+        except (requests.RequestException, ValueError):
+            pass
+
+    players = staff = queue = "Unavailable"
+    updated = "Stats unavailable"
+
+    if isinstance(data, dict):
+        current = data.get("CurrentPlayers")
+        maximum = data.get("MaxPlayers")
+        if isinstance(current, int) and isinstance(maximum, int):
+            players = f"{current} / {maximum}"
+
+        staff = online_staff_count(data)
+        queued_players = data.get("Queue")
+        if isinstance(queued_players, list):
+            queue = str(len(queued_players))
+
+        updated = f"<t:{int(discord.utils.utcnow().timestamp())}:t>"
+
+    info = discord.Embed(
         title=SERVER_NAME,
-        description=(
-            "**Session Information**\n"
-            "Click **Join Server** below to open our ER:LC private server, "
-            "or enter the game code in ER:LC."
-        ),
+        description=f"**Session Information**\nLast updated: {updated}",
         color=discord.Color.blue(),
     )
-    embed.add_field(name="Game Code", value=f"`{GAME_CODE}`", inline=False)
-    embed.set_thumbnail(url="attachment://noFilter.webp")
+    info.add_field(name="In-game Players", value=players, inline=False)
+    info.add_field(name="Online Staff", value=staff, inline=False)
+    info.add_field(name="Queue", value=queue, inline=False)
+    info.add_field(name="Game Code", value=f"`{GAME_CODE}`", inline=False)
 
-    await interaction.response.send_message(
-        embed=embed,
-        file=discord.File(LOGO_PATH, filename="noFilter.webp"),
-        view=join_button(),
-    )
+    if BANNER_PATH.is_file():
+        banner = discord.Embed(color=discord.Color.blue())
+        banner.set_image(url=f"attachment://{BANNER_PATH.name}")
+        await interaction.followup.send(
+            embeds=[banner, info],
+            file=discord.File(BANNER_PATH, filename=BANNER_PATH.name),
+            view=join_button(),
+        )
+    else:
+        print(f"Session banner missing: {BANNER_PATH.name}", flush=True)
+        await interaction.followup.send(embed=info, view=join_button())
 
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN", "").strip()
     if not token:
         raise RuntimeError("Set DISCORD_TOKEN in Railway Variables or your local .env.")
-
     bot.run(token)
