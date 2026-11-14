@@ -170,10 +170,11 @@ async def ssu(interaction: discord.Interaction):
 
     started = int(discord.utils.utcnow().timestamp())
     embed = discord.Embed(
+        title="Session Started!",
         description=(
-            "# Session Started!\n"
-            "Join up for top tier roleplay.\n\n"
-            f"**Session started:** <t:{started}:R>"
+            "Our ER:LC roleplay session is now live! "
+            "Click **Join Server** below to hop in and start roleplaying.\n\n"
+            f"Session started: <t:{started}:R>"
         ),
         color=discord.Color.blue(),
     )
